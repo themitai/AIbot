@@ -33,7 +33,7 @@ def get_group_keyboard():
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     text = (
-        "Привет! 👋\n"
+        "Привет! 👋\n\n"
         "Я бот-помощник по арбитражу крипты и P2P.\n"
         "Задавай любой вопрос — от связок и банков до вывода и безопасности.\n\n"
         "Давай начнём? 💸"
@@ -81,30 +81,22 @@ async def ai_answer_handler(message: Message):
             reply_markup=get_group_keyboard()
         )
 
-# ===================== WEBHOOK ДЛЯ RAILWAY =====================
+# ===================== WEBHOOK =================
 async def on_startup(dispatcher: Dispatcher):
+    # Удаляем старый webhook
     await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Старый webhook удалён")
+
+    # Устанавливаем новый (Railway сам подставит домен)
     webhook_url = f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/webhook"
     await bot.set_webhook(webhook_url)
     logger.info(f"Webhook установлен: {webhook_url}")
 
 async def on_shutdown(dispatcher: Dispatcher):
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Webhook удалён")
+    logger.info("Webhook удалён при шатдауне")
 
-async def main():
-    # Удаляем старый webhook
-    await bot.delete_webhook(drop_pending_updates=True)
-
-    # Устанавливаем новый
-    webhook_url = f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/webhook"
-    await bot.set_webhook(webhook_url)
-    logger.info(f"Webhook установлен: {webhook_url}")
-
-    # Запуск polling как запасной вариант (на Railway webhook предпочтительнее)
-    # await dp.start_polling(bot)
-
-# Запуск на Railway через aiohttp
+# Создаём приложение aiohttp
 app = web.Application()
 webhook_handler = SimpleRequestHandler(
     dispatcher=dp,
@@ -113,14 +105,9 @@ webhook_handler = SimpleRequestHandler(
 webhook_handler.register(app, path="/webhook")
 setup_application(app, dp, bot=bot)
 
-async def startup(app: web.Application):
-    await on_startup(dp)
-
-async def shutdown(app: web.Application):
-    await on_shutdown(dp)
-
-app.on_startup.append(startup)
-app.on_shutdown.append(shutdown)
+# Регистрируем startup/shutdown
+app.on_startup.append(on_startup)
+app.on_shutdown.append(on_shutdown)
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
