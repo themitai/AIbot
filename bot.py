@@ -1,19 +1,17 @@
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
-
+from dotenv import load_dotenv
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 import httpx
-from dotenv import load_dotenv
 
 load_dotenv()
 
-# ================== НАСТРОЙКИ ==================
+# ================= НАСТРОЙКИ =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_LINK = os.getenv("GROUP_LINK")
 AI_API_KEY = os.getenv("AI_API_KEY")
@@ -84,12 +82,6 @@ async def ai_answer_handler(message: Message):
         )
 
 # ===================== WEBHOOK ДЛЯ RAILWAY =====================
-@asynccontextmanager
-async def lifespan(app: web.Application):
-    await on_startup(dp)
-    yield
-    await on_shutdown(dp)
-
 async def on_startup(dispatcher: Dispatcher):
     await bot.delete_webhook(drop_pending_updates=True)
     webhook_url = f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/webhook"
@@ -100,16 +92,35 @@ async def on_shutdown(dispatcher: Dispatcher):
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Webhook удалён")
 
-def create_app(dp: Dispatcher):
-    app = web.Application(lifespan=lifespan)
-    webhook_handler = SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-    )
-    webhook_handler.register(app, path="/webhook")
-    setup_application(app, dp, bot=bot)
-    return app
+async def main():
+    # Удаляем старый webhook
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    # Устанавливаем новый
+    webhook_url = f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/webhook"
+    await bot.set_webhook(webhook_url)
+    logger.info(f"Webhook установлен: {webhook_url}")
+
+    # Запуск polling как запасной вариант (на Railway webhook предпочтительнее)
+    # await dp.start_polling(bot)
+
+# Запуск на Railway через aiohttp
+app = web.Application()
+webhook_handler = SimpleRequestHandler(
+    dispatcher=dp,
+    bot=bot,
+)
+webhook_handler.register(app, path="/webhook")
+setup_application(app, dp, bot=bot)
+
+async def startup(app: web.Application):
+    await on_startup(dp)
+
+async def shutdown(app: web.Application):
+    await on_shutdown(dp)
+
+app.on_startup.append(startup)
+app.on_shutdown.append(shutdown)
 
 if __name__ == "__main__":
-    app = create_app(dp)
     web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
