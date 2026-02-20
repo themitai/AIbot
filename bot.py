@@ -1,17 +1,19 @@
 import asyncio
 import logging
 import os
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-import httpx
-from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+import httpx
+from dotenv import load_dotenv
 
 load_dotenv()
 
-# ================= НАСТРОЙКИ =================
+# ================== НАСТРОЙКИ ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_LINK = os.getenv("GROUP_LINK")
 AI_API_KEY = os.getenv("AI_API_KEY")
@@ -33,7 +35,7 @@ def get_group_keyboard():
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     text = (
-        "Привет! 👋\n\n"
+        "Привет! 👋\n"
         "Я бот-помощник по арбитражу крипты и P2P.\n"
         "Задавай любой вопрос — от связок и банков до вывода и безопасности.\n\n"
         "Давай начнём? 💸"
@@ -82,18 +84,24 @@ async def ai_answer_handler(message: Message):
         )
 
 # ===================== WEBHOOK ДЛЯ RAILWAY =====================
+@asynccontextmanager
+async def lifespan(app: web.Application):
+    await on_startup(dp)
+    yield
+    await on_shutdown(dp)
+
 async def on_startup(dispatcher: Dispatcher):
     await bot.delete_webhook(drop_pending_updates=True)
     webhook_url = f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/webhook"
     await bot.set_webhook(webhook_url)
-    logger.info(f"Webhook успешно установлен: {webhook_url}")
+    logger.info(f"Webhook установлен: {webhook_url}")
 
 async def on_shutdown(dispatcher: Dispatcher):
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Webhook удалён")
 
 def create_app(dp: Dispatcher):
-    app = web.Application()
+    app = web.Application(lifespan=lifespan)
     webhook_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
@@ -103,8 +111,5 @@ def create_app(dp: Dispatcher):
     return app
 
 if __name__ == "__main__":
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
     app = create_app(dp)
     web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
