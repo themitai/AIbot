@@ -6,17 +6,18 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 import httpx
+from aiohttp import web
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 load_dotenv()
 
-# Переменные из .env (Railway их увидит автоматически)
+# ================= НАСТРОЙКИ =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_LINK = os.getenv("GROUP_LINK")
 AI_API_KEY = os.getenv("AI_API_KEY")
 AI_API_URL = os.getenv("AI_API_URL")
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
 
-# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def get_group_keyboard():
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     text = (
-        "Привет! 👋\n"
+        "Привет! 👋\n\n"
         "Я бот-помощник по арбитражу крипты и P2P.\n"
         "Задавай любой вопрос — от связок и банков до вывода и безопасности.\n\n"
         "Давай начнём? 💸"
@@ -42,20 +43,15 @@ async def start_handler(message: Message):
 @dp.message()
 async def ai_answer_handler(message: Message):
     user_text = message.text.strip()
-
     if not user_text:
         await message.answer("Напиши вопрос, я помогу! 👇")
         return
 
-    # Запрос к OpenAI (или другому ИИ)
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 AI_API_URL,
-                headers={
-                    "Authorization": f"Bearer {AI_API_KEY}",
-                    "Content-Type": "application/json"
-                },
+                headers={"Authorization": f"Bearer {AI_API_KEY}"},
                 json={
                     "model": AI_MODEL,
                     "messages": [
@@ -66,28 +62,49 @@ async def ai_answer_handler(message: Message):
                         {"role": "user", "content": user_text}
                     ],
                     "temperature": 0.7,
-                    "max_tokens": 500
+                    "max_tokens": 600
                 },
-                timeout=30.0
+                timeout=35.0
             )
             response.raise_for_status()
             ai_reply = response.json()["choices"][0]["message"]["content"].strip()
 
-        full_reply = ai_reply + f"\n\nХочешь свежие связки, поддержку и закрытый чат команды? Заходи сюда 👇"
+        full_reply = ai_reply + f"\n\nХочешь свежие связки и поддержку команды? Заходи в группу 👇"
         await message.answer(full_reply, reply_markup=get_group_keyboard(), disable_web_page_preview=True)
 
     except Exception as e:
         logger.error(f"Ошибка ИИ: {e}")
         await message.answer(
             "Извини, сейчас небольшой сбой с ИИ 😅\n"
-            "Попробуй задать вопрос ещё раз или сразу заходи в группу — там всегда есть живые связки и помощь:\n"
+            "Попробуй задать вопрос ещё раз или сразу заходи в группу:\n"
             f"{GROUP_LINK}",
             reply_markup=get_group_keyboard()
         )
 
-async def main():
-    logger.info("Бот запущен")
-    await dp.start_polling(bot)  # ← без allowed_updates — правильный вариант в aiogram 3.x
+# ===================== WEBHOOK ДЛЯ RAILWAY =====================
+async def on_startup(dispatcher: Dispatcher):
+    await bot.delete_webhook(drop_pending_updates=True)
+    webhook_url = f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/webhook"
+    await bot.set_webhook(webhook_url)
+    logger.info(f"Webhook успешно установлен: {webhook_url}")
+
+async def on_shutdown(dispatcher: Dispatcher):
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Webhook удалён")
+
+def create_app(dp: Dispatcher):
+    app = web.Application()
+    webhook_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    )
+    webhook_handler.register(app, path="/webhook")
+    setup_application(app, dp, bot=bot)
+    return app
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    app = create_app(dp)
+    web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
