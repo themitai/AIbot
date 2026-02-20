@@ -2,19 +2,19 @@ import asyncio
 import logging
 import os
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 import httpx
 
 load_dotenv()
 
-# === Настройки ===
+# Переменные из .env (Railway их увидит автоматически)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_LINK = os.getenv("GROUP_LINK")
-AI_API_KEY = os.getenv("AI_API_KEY")          # твой ключ от ИИ
-AI_API_URL = os.getenv("AI_API_URL")          # эндпоинт (см. ниже)
-AI_MODEL = os.getenv("AI_MODEL", "grok-beta") # или gpt-4o-mini, claude-3.5-sonnet и т.д.
+AI_API_KEY = os.getenv("AI_API_KEY")
+AI_API_URL = os.getenv("AI_API_URL")
+AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
@@ -23,14 +23,14 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Клавиатура с переходом в группу
+# Кнопка перехода в группу
 def get_group_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Перейти в группу →", url=GROUP_LINK)]
     ])
 
 @dp.message(CommandStart())
-async def start_handler(message: types.Message):
+async def start_handler(message: Message):
     text = (
         "Привет! 👋\n"
         "Я бот-помощник по арбитражу крипты и P2P.\n"
@@ -40,23 +40,29 @@ async def start_handler(message: types.Message):
     await message.answer(text, reply_markup=get_group_keyboard())
 
 @dp.message()
-async def ai_answer_handler(message: types.Message):
+async def ai_answer_handler(message: Message):
     user_text = message.text.strip()
 
     if not user_text:
         await message.answer("Напиши вопрос, я помогу! 👇")
         return
 
-    # Подготовка запроса к твоему ИИ
+    # Запрос к OpenAI (или другому ИИ)
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 AI_API_URL,
-                headers={"Authorization": f"Bearer {AI_API_KEY}"},
+                headers={
+                    "Authorization": f"Bearer {AI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
                 json={
                     "model": AI_MODEL,
                     "messages": [
-                        {"role": "system", "content": "Ты эксперт по арбитражу криптовалют и P2P. Отвечай честно, по делу, без воды. В конце каждого ответа предлагай перейти в группу за актуальными связками."},
+                        {
+                            "role": "system",
+                            "content": "Ты эксперт по арбитражу криптовалют и P2P. Отвечай честно, по делу, без воды. В конце каждого ответа предлагай перейти в группу за актуальными связками и поддержкой команды."
+                        },
                         {"role": "user", "content": user_text}
                     ],
                     "temperature": 0.7,
@@ -67,7 +73,7 @@ async def ai_answer_handler(message: types.Message):
             response.raise_for_status()
             ai_reply = response.json()["choices"][0]["message"]["content"].strip()
 
-        full_reply = ai_reply + f"\n\nХочешь свежие связки и поддержку команды? Заходи в группу 👇"
+        full_reply = ai_reply + f"\n\nХочешь свежие связки, поддержку и закрытый чат команды? Заходи сюда 👇"
         await message.answer(full_reply, reply_markup=get_group_keyboard(), disable_web_page_preview=True)
 
     except Exception as e:
@@ -81,7 +87,7 @@ async def ai_answer_handler(message: types.Message):
 
 async def main():
     logger.info("Бот запущен")
-    await dp.start_polling(bot, allowed_updates=types.AllUpdateTypes())
+    await dp.start_polling(bot)  # ← без allowed_updates — правильный вариант в aiogram 3.x
 
 if __name__ == "__main__":
     asyncio.run(main())
